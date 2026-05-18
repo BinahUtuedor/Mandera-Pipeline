@@ -1,0 +1,14 @@
+{
+  "Servers": {
+    "1": {
+      "Name": "Local Postgres",
+      "Group": "Servers",
+      "Host": "mandera_postgres",
+      "Port": 5432,
+      "MaintenanceDB": "airflow",
+      "Username": "airflow",
+      "Password": "airflow",
+      "SSLMode": "prefer"
+    }
+  }
+}

@@ -1,73 +1,43 @@
 import os
 import uuid
 import random
-from datetime import datetime
+from datetime import datetime, UTC
 
 from faker import Faker
 from pymongo import MongoClient
 from dotenv import load_dotenv
 
-# ---------------------------------------------------
-# LOAD ENVIRONMENT VARIABLES
-# ---------------------------------------------------
 
-print("Starting script...")
-
+# ==================================================
+# LOAD ENV
+# ==================================================
 load_dotenv()
-
-print("Environment variables loaded...")
 
 MONGO_URI = os.getenv("MONGO_URI")
 
 if not MONGO_URI:
-    raise ValueError("MONGO_URI environment variable is not set.")
+    raise ValueError("MONGO_URI environment variable not set")
 
-# ---------------------------------------------------
-# CONFIGURATION
-# ---------------------------------------------------
 
+# ==================================================
+# CONFIG
+# ==================================================
 DATABASE_NAME = "mandera_pipeline"
 COLLECTION_NAME = "transactions"
 
-BATCH_SIZE = 200
-BAD_RECORD_COUNT = random.randint(3, 5)
-
-# ---------------------------------------------------
-# INITIALISE SERVICES
-# ---------------------------------------------------
-
 fake = Faker()
 
-print("Connecting to MongoDB...")
 
-client = MongoClient(MONGO_URI)
-
-db = client[DATABASE_NAME]
-collection = db[COLLECTION_NAME]
-
-print("Connected successfully.")
-
-# ---------------------------------------------------
-# GENERATE BATCH METADATA
-# ---------------------------------------------------
-
-batch_id = f"BATCH-{uuid.uuid4().hex[:8].upper()}"
-batch_timestamp = datetime.utcnow()
-
-# ---------------------------------------------------
-# HELPER FUNCTIONS
-# ---------------------------------------------------
-
-def generate_transaction_record():
-    """
-    Generate a valid transaction record.
-    """
+# ==================================================
+# GENERATE VALID RECORD
+# ==================================================
+def generate_transaction_record(batch_id, batch_timestamp):
 
     amount = round(random.uniform(10.0, 10000.0), 2)
 
     return {
         "transaction_id": f"TXN-{uuid.uuid4().hex[:10].upper()}",
-        "customer_id": f"CUST-{random.randint(1000, 9999)}",
+        "customer_id": f"CUST-{random.randint(1000,9999)}",
         "customer_name": fake.name(),
         "email": fake.email(),
         "transaction_date": fake.date_time_between(
@@ -76,26 +46,39 @@ def generate_transaction_record():
         ),
         "amount": amount,
         "currency": random.choice(["USD", "GBP", "KES", "EUR"]),
-        "payment_method": random.choice(
-            ["Card", "Bank Transfer", "Mobile Money", "Cash"]
-        ),
-        "region": random.choice(
-            ["Nairobi", "Mombasa", "Kisumu", "Eldoret", "London"]
-        ),
-        "status": random.choice(
-            ["SUCCESS", "FAILED", "PENDING"]
-        ),
+        "payment_method": random.choice([
+            "Card",
+            "Bank Transfer",
+            "Mobile Money",
+            "Cash"
+        ]),
+        "region": random.choice([
+            "Nairobi",
+            "Mombasa",
+            "Kisumu",
+            "Eldoret",
+            "London"
+        ]),
+        "status": random.choice([
+            "SUCCESS",
+            "FAILED",
+            "PENDING"
+        ]),
         "batch_id": batch_id,
         "batch_timestamp": batch_timestamp,
-        "created_at": datetime.utcnow()
+        "created_at": datetime.now(UTC)
     }
 
 
-def generate_bad_record():
-    """
-    Generate intentionally bad records
-    to simulate real-world data quality issues.
-    """
+# ==================================================
+# GENERATE BAD RECORD
+# ==================================================
+def generate_bad_record(batch_id, batch_timestamp):
+
+    record = generate_transaction_record(
+        batch_id,
+        batch_timestamp
+    )
 
     bad_record_type = random.choice([
         "missing_amount",
@@ -104,8 +87,6 @@ def generate_bad_record():
         "invalid_date",
         "null_region"
     ])
-
-    record = generate_transaction_record()
 
     if bad_record_type == "missing_amount":
         del record["amount"]
@@ -127,55 +108,73 @@ def generate_bad_record():
     return record
 
 
-# ---------------------------------------------------
-# GENERATE RECORDS
-# ---------------------------------------------------
+# ==================================================
+# MAIN GENERATOR FUNCTION
+# ==================================================
+def run(batch_size=200):
 
-records = []
+    print("Starting transaction generation...")
 
-# Generate valid records
-valid_record_count = BATCH_SIZE - BAD_RECORD_COUNT
+    client = MongoClient(MONGO_URI)
 
-for _ in range(valid_record_count):
-    records.append(generate_transaction_record())
+    db = client[DATABASE_NAME]
+    collection = db[COLLECTION_NAME]
 
-# Generate bad records
-for _ in range(BAD_RECORD_COUNT):
-    records.append(generate_bad_record())
+    batch_id = f"BATCH-{uuid.uuid4().hex[:8].upper()}"
+    batch_timestamp = datetime.now(UTC)
 
-# Shuffle records so bad records are mixed in
-random.shuffle(records)
+    bad_record_count = random.randint(3, 5)
 
-# ---------------------------------------------------
-# INSERT INTO MONGODB
-# ---------------------------------------------------
+    valid_record_count = batch_size - bad_record_count
 
-try:
+    records = []
+
+    # VALID RECORDS
+    for _ in range(valid_record_count):
+        records.append(
+            generate_transaction_record(
+                batch_id,
+                batch_timestamp
+            )
+        )
+
+    # BAD RECORDS
+    for _ in range(bad_record_count):
+        records.append(
+            generate_bad_record(
+                batch_id,
+                batch_timestamp
+            )
+        )
+
+    random.shuffle(records)
 
     result = collection.insert_many(records)
 
     print("=" * 60)
-    print("MANDERA ANALYTICS PIPELINE - DATA GENERATOR")
+    print("MANDERA ANALYTICS PIPELINE")
     print("=" * 60)
 
     print(f"Batch ID: {batch_id}")
-    print(f"Batch Timestamp: {batch_timestamp}")
-
-    print(f"\nTotal Records Generated: {len(records)}")
-    print(f"Valid Records: {valid_record_count}")
-    print(f"Bad Records: {BAD_RECORD_COUNT}")
-
-    print(f"\nInserted Documents: {len(result.inserted_ids)}")
-
-    print("\nData successfully inserted into MongoDB Atlas.")
-
-except Exception as e:
-
-    print("\nERROR INSERTING DATA INTO MONGODB")
-    print(str(e))
-
-finally:
+    print(f"Inserted: {len(result.inserted_ids)}")
 
     client.close()
 
-    print("\nMongoDB connection closed.")
+    # IMPORTANT FOR AIRFLOW XCOM
+    return {
+        "batch_id": batch_id,
+        "record_count": len(records),
+        "batch_timestamp": str(batch_timestamp)
+    }
+
+
+# ==================================================
+# LOCAL ENTRYPOINT ONLY
+# ==================================================
+if __name__ == "__main__":
+
+    import sys
+
+    batch_size = int(sys.argv[1]) if len(sys.argv) > 1 else 200
+
+    run(batch_size)
