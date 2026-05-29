@@ -1,59 +1,89 @@
+# Workflow name shown in GitHub Actions UI
 name: Mandera Data Generator
 
-on:
-  schedule:
-    - cron: "0 */6 * * *"   # every 6 hours
-  workflow_dispatch:        # allows manual run
+# Global environment variables
+# Forces GitHub Actions to use Node.js 24 for official actions
+# (future-proofs against Node.js 20 deprecation warnings)
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
+# Workflow triggers
+on:
+  # Automatically run every 6 hours
+  schedule:
+    - cron: "0 */6 * * *"
+
+  # Allows manual execution from GitHub Actions tab
+  workflow_dispatch:
+
+# Prevent multiple scheduled runs from overlapping
+# If one run is still active, the next waits
 concurrency:
   group: mandera-data-generator
   cancel-in-progress: false
 
 jobs:
   generate-data:
+
+    # Use latest Ubuntu GitHub-hosted runner
     runs-on: ubuntu-latest
+
+    # Automatically stop workflow if it exceeds 60 minutes
     timeout-minutes: 60
 
     steps:
-      # 1. Checkout repo
+
+      # Step 1: Pull repository code into runner
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2. Setup Python
+      # Step 2: Install Python runtime
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      # 3. Install dependencies
+      # Step 3: Install Python dependencies
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      # 4. Run script with retry logic
+      # Step 4: Execute transaction generator script
+      # Includes retry logic for temporary failures
       - name: Run data generator
         env:
+          # Secure MongoDB connection string from GitHub Secrets
           MONGO_URI: ${{ secrets.MONGO_URI }}
+
         run: |
+
+          # Maximum retry attempts
           ATTEMPTS=3
+
+          # Initial attempt counter
           COUNT=1
 
+          # Retry loop
           until [ $COUNT -gt $ATTEMPTS ]
           do
             echo "Starting attempt $COUNT..."
 
+            # Run Python generator script
             python data_generator/generate_transactions.py && break
 
             echo "Attempt $COUNT failed."
 
+            # Exit workflow if final attempt fails
             if [ $COUNT -eq $ATTEMPTS ]; then
               echo "All retry attempts failed."
               exit 1
             fi
 
+            # Increment retry counter
             COUNT=$((COUNT+1))
 
+            # Wait before retrying
             echo "Retrying in 30 seconds..."
             sleep 30
           done
