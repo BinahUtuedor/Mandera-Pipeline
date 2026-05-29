@@ -1,4 +1,3 @@
-```yaml
 name: Mandera Data Generator
 
 on:
@@ -58,4 +57,3 @@ jobs:
             echo "Retrying in 30 seconds..."
             sleep 30
           done
-```
