@@ -1,3 +1,4 @@
+```yaml
 name: Mandera Data Generator
 
 on:
@@ -5,9 +6,14 @@ on:
     - cron: "0 */6 * * *"   # every 6 hours
   workflow_dispatch:        # allows manual run
 
+concurrency:
+  group: mandera-data-generator
+  cancel-in-progress: false
+
 jobs:
   generate-data:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
 
     steps:
       # 1. Checkout repo
@@ -26,9 +32,30 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      # 4. Run script
+      # 4. Run script with retry logic
       - name: Run data generator
         env:
           MONGO_URI: ${{ secrets.MONGO_URI }}
         run: |
-          python data_generator/generate_transactions.py
+          ATTEMPTS=3
+          COUNT=1
+
+          until [ $COUNT -gt $ATTEMPTS ]
+          do
+            echo "Starting attempt $COUNT..."
+
+            python data_generator/generate_transactions.py && break
+
+            echo "Attempt $COUNT failed."
+
+            if [ $COUNT -eq $ATTEMPTS ]; then
+              echo "All retry attempts failed."
+              exit 1
+            fi
+
+            COUNT=$((COUNT+1))
+
+            echo "Retrying in 30 seconds..."
+            sleep 30
+          done
+```
