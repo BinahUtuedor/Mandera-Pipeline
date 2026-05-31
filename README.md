@@ -162,7 +162,7 @@ AIRFLOW_IMAGE_TAG=2.9.3
 AIRFLOW_USER=admin
 AIRFLOW_PASSWORD=admin
 AIRFLOW_EMAIL=admin@example.com
-FERNET_KEY=46BKJoQYlPPOexq0OhDZnIlNepKFf87WFwLbfzqDDho=
+FERNET_KEY=<Your fernet key here>
 
 # PostgreSQL Configuration
 POSTGRES_USER=airflow
