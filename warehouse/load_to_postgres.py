@@ -1,21 +1,20 @@
+# warehouse/load_to_postgres.py
+
 import os
 import json
 import logging
+from datetime import datetime, UTC
 
 import boto3
 import psycopg2
 
 from dotenv import load_dotenv
-from pymongo import MongoClient
 from botocore.client import Config
-
 
 # ==========================================
 # ENV
 # ==========================================
 load_dotenv()
-
-MONGO_URI = os.getenv("MONGO_URI")
 
 MINIO_ENDPOINT = os.getenv("MINIO_ENDPOINT")
 MINIO_ACCESS_KEY = os.getenv("MINIO_ACCESS_KEY")
@@ -27,7 +26,6 @@ POSTGRES_PORT = os.getenv("POSTGRES_PORT", "5432")
 POSTGRES_DB = os.getenv("POSTGRES_DB", "airflow")
 POSTGRES_USER = os.getenv("POSTGRES_USER", "airflow")
 POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "airflow")
-
 
 # ==========================================
 # POSTGRES CONNECTION
@@ -41,7 +39,6 @@ def get_conn():
         user=POSTGRES_USER,
         password=POSTGRES_PASSWORD
     )
-
 
 # ==========================================
 # MINIO CLIENT
@@ -57,9 +54,8 @@ def get_s3():
         region_name="us-east-1"
     )
 
-
 # ==========================================
-# READ FROM MINIO
+# READ FILE FROM MINIO
 # ==========================================
 def read_minio(object_path):
 
@@ -72,9 +68,9 @@ def read_minio(object_path):
 
     return json.loads(response["Body"].read())
 
-
 # ==========================================
-# LOAD RAW TABLE
+# LOAD RAW TRANSACTIONS
+# RAW LAYER = EXACT COPY OF SOURCE DATA
 # ==========================================
 def load_raw(records):
 
@@ -84,17 +80,26 @@ def load_raw(records):
     sql = """
         INSERT INTO raw.transactions (
             transaction_id,
-            batch_id,
-            sender_name,
-            receiver_name,
+            customer_id,
+            customer_name,
+            email,
+            transaction_date,
             amount,
             currency,
-            country,
             payment_method,
-            transaction_date,
-            status
+            region,
+            status,
+            batch_id,
+            batch_timestamp,
+            created_at,
+            ingestion_timestamp
         )
-        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+        VALUES (
+            %s,%s,%s,%s,
+            %s,%s,%s,%s,
+            %s,%s,%s,%s,
+            %s,%s
+        )
     """
 
     count = 0
@@ -105,21 +110,26 @@ def load_raw(records):
             sql,
             (
                 r.get("transaction_id"),
-                r.get("batch_id"),
+                r.get("customer_id"),
                 r.get("customer_name"),
-                r.get("customer_name"),
-                str(r.get("amount")),
+                r.get("email"),
+                r.get("transaction_date"),
+                r.get("amount"),
                 r.get("currency"),
-                r.get("region"),
                 r.get("payment_method"),
-                str(r.get("transaction_date")),
+                r.get("region"),
                 r.get("status"),
+                r.get("batch_id"),
+                r.get("batch_timestamp"),
+                r.get("created_at"),
+                datetime.now(UTC)
             )
         )
 
         count += 1
 
     conn.commit()
+
     cur.close()
     conn.close()
 
@@ -127,33 +137,75 @@ def load_raw(records):
 
 
 # ==========================================
-# LOG BATCH
+# LOG BATCH LOAD RESULTS
 # ==========================================
 def log_batch(batch_id, expected, loaded):
 
     conn = get_conn()
     cur = conn.cursor()
 
-    status = "SUCCESS" if expected == loaded else "MISMATCH"
+    if expected == 0:
+        variance_pct = 0
+    else:
+        variance_pct = round(
+            abs(expected - loaded)
+            / expected
+            * 100,
+            2
+        )
+
+    anomaly_flag = variance_pct > 5
+
+    status = (
+        "ANOMALY"
+        if anomaly_flag
+        else (
+            "SUCCESS"
+            if expected == loaded
+            else "MISMATCH"
+        )
+    )
 
     cur.execute(
         """
         INSERT INTO raw.batch_log
-        (batch_id, source_record_count, loaded_record_count, load_status)
-        VALUES (%s,%s,%s,%s)
+        (
+            batch_id,
+            source_record_count,
+            loaded_record_count,
+            variance_pct,
+            load_status,
+            anomaly_flag
+        )
+        VALUES (%s,%s,%s,%s,%s,%s)
+
         ON CONFLICT (batch_id)
         DO UPDATE SET
-            source_record_count=EXCLUDED.source_record_count,
-            loaded_record_count=EXCLUDED.loaded_record_count,
-            load_status=EXCLUDED.load_status
+            source_record_count =
+                EXCLUDED.source_record_count,
+            loaded_record_count =
+                EXCLUDED.loaded_record_count,
+            variance_pct =
+                EXCLUDED.variance_pct,
+            load_status =
+                EXCLUDED.load_status,
+            anomaly_flag =
+                EXCLUDED.anomaly_flag
         """,
-        (batch_id, expected, loaded, status)
+        (
+            batch_id,
+            expected,
+            loaded,
+            variance_pct,
+            status,
+            anomaly_flag
+        )
     )
 
     conn.commit()
+
     cur.close()
     conn.close()
-
 
 # ==========================================
 # MAIN AIRFLOW ENTRYPOINT
@@ -165,15 +217,36 @@ def run_pipeline(batch_id, object_path):
     records = read_minio(object_path)
 
     expected = len(records)
+
+    logging.info(
+        f"Read {expected} records from MinIO: {object_path}"
+    )
+
     loaded = load_raw(records)
 
-    log_batch(batch_id, expected, loaded)
+    log_batch(
+        batch_id=batch_id,
+        expected=expected,
+        loaded=loaded
+    )
 
-    logging.info(f"Loaded {loaded} records")
+    logging.info(
+        f"Batch {batch_id}: Loaded {loaded} records"
+    )
 
-    # optional XCom return
     return {
         "batch_id": batch_id,
         "expected": expected,
-        "loaded": loaded
+        "loaded": loaded,
+        "status": "SUCCESS" if expected == loaded else "MISMATCH"
     }
+
+# ==========================================
+# LOCAL TESTING
+# ==========================================
+if __name__ == "__main__":
+
+    run_pipeline(
+        batch_id="BATCH-676CDB4A",
+        object_path="year=2026/month=05/day=14/BATCH-676CDB4A.json"
+    )

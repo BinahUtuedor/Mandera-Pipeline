@@ -1,13 +1,39 @@
-venv/
-.venv/
-env/
+## Environment and configuration
+.env
+*.env
 
+## Python
+__pycache__/
+
+env/
+venv/
+ENV/
+.python-version
 __pycache__/
 *.pyc
-
 .env
 
-README.md
 
+## Airflow
 logs
+logs/
+airflow.db
+airflow.cfg
+airflow-webserver.pid
+webserver_config.py
+airflow.db-wal
+airflow.db-shm
+airflow.db-journal
 
+## Logs and metrics
+logs/
+*.log
+metrics/
+__pycache__/
+
+## Temporary files
+tmp/
+temp/
+*.tmp
+*.bak
+*.backup

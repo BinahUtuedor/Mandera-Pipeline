@@ -1,12 +1,9 @@
+apache-airflow==2.9.3
 faker
 python-dotenv
 dnspython
 sqlalchemy
-
 psycopg2-binary==2.9.9
-
 pymongo==4.6.3
 boto3==1.34.0
-pandas==2.1.4
-
-apache-airflow-providers-apache-spark==5.2.1
+pandas==2.1.3
