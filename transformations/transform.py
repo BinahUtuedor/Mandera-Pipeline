@@ -10,7 +10,7 @@ from sqlalchemy import create_engine
 # ==========================================
 
 ENGINE = create_engine(
-"postgresql://airflow:airflow@postgres:5432/airflow"
+    "postgresql://airflow:airflow@postgres:5432/airflow"
 )
 
 # ==========================================
@@ -146,6 +146,18 @@ def run_transform():
             "batch_timestamp",
             "created_at"
         ]
+    ]
+
+    # ======================================
+    # REMOVE EXISTING TRANSACTION IDS
+    # ======================================
+    existing_ids = pd.read_sql(
+        "SELECT transaction_id FROM staging.transactions",
+        ENGINE
+    )
+
+    good = good[
+        ~good["transaction_id"].isin(existing_ids["transaction_id"])
     ]
 
     # ======================================
